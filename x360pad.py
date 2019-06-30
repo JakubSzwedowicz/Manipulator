@@ -1,7 +1,7 @@
 import time
 from collections import defaultdict
 from xbox360controller import Xbox360Controller
-import Pyro4
+#import Pyro4
 from threading import Thread
 from RPi import GPIO
 import os
@@ -11,47 +11,59 @@ import sys, termios, tty
 import adafruit_ads1x15.ads1115 as ADS
 from adafruit_ads1x15.analog_in import AnalogIn
 
-class DuzySilnik(object):
+class DuzySilnik(object):    
     
-    
-    def __init__(self, _motor_en, _motor_pwm, _motor_dir):	#(self, _motor_en, _motor_pwm, _motor_dir, _ads):
+    def __init__(self, _motor_en, _motor_pwm, _motor_dir, _ads, _ads_pin):
         self.motor_en = _motor_en
         self.motor_pwm = _motor_pwm
         self.motor_dir = _motor_dir
-		UstawieniaDuzegoSilnika(self)
-        #self.pozycja = AnalogIn(_ads, ADS.P0) # Create single-ended input on channel 0        
+        self.UstawieniaSilnika()
+        self.pozycja = AnalogIn(_ads, _ads_pin) # Create single-ended input on channel 0      
             
-    def Jedz(predkosc): #  -100 < predkosc < 100
-		if(predkosc != self.wypelnienie_pwm):
-			if(predkosc == 0):
-				self.wypelnienie_pwm.ChangeDutyCycle(0)
-			elif(predkosc > 0):
-				GPIO.output(self.motor_dir, True)
-				self.wypelnienie_pwm.ChangeDutyCycle(predkosc)
-			elif( (predkosc = predkosc + 2*predkosc) != self.wypelnienie_pwm)
-				GPIO.output(self.motor_dir, False)
-				predkosc = predkosc + 2*predkosc
-				self.wypelnienie_pwm.ChangeDutyCycle(predkosc)
+    def Jedz(self, predkosc): #  -100 < predkosc < 100
+        predkosc = float(predkosc) * 100        
+        if(predkosc != self.wypelnienie_pwm):
+            
+            if(predkosc == 0):
+                self.wypelnienie_pwm.ChangeDutyCycle(0)
+            elif(predkosc > 0):
+                GPIO.output(self.motor_dir, True)
+                self.wypelnienie_pwm.ChangeDutyCycle(predkosc)
+            else:                
+                predkosc = predkosc - 2*predkosc
+                if( predkosc != self.wypelnienie_pwm):
+                    GPIO.output(self.motor_dir, False)
+                    self.wypelnienie_pwm.ChangeDutyCycle(predkosc)
 
-	def UstawieniaSilnika(self):
-		GPIO.setmode(GPIO.BCM) #numerowanie pinow GPIO wedlug BCM    
-		GPIO.setup(self.motor_pwm, GPIO.OUT) #32 - PWM1
-		GPIO.setup(self.motor_dir, GPIO.OUT) #18 - kierunek obrotu
-		GPIO.setup(self.motor_en, GPIO.OUT) #15 Zeby ustawic Enable
-		GPIO.output(self.motor_en, True) # Zeby sterowac silnikiem - False wylacza silnik na HAT
-		self.wypelnienie_pwm = GPIO.PWM(self.motor_pwm, 50) # ustawienie pinu na PWM)
-		self.wypelnienie_pwm.start(0) # ustawienie pwm na 100%
+    def UstawieniaSilnika(self):
+    	GPIO.setmode(GPIO.BCM) #numerowanie pinow GPIO wedlug BCM
+    	GPIO.setup(self.motor_pwm, GPIO.OUT) #32 - PWM1
+    	GPIO.setup(self.motor_dir, GPIO.OUT) #18 - kierunek obrotu
+    	GPIO.setup(self.motor_en, GPIO.OUT) #15 Zeby ustawic Enable
+    	GPIO.output(self.motor_en, True) # Zeby sterowac silnikiem - False wylacza silnik na HAT
+    	self.wypelnienie_pwm = GPIO.PWM(self.motor_pwm, 50) # ustawienie pinu na PWM)
+    	self.wypelnienie_pwm.start(0) # ustawienie pwm na 100%
        
     def Zatrzymaj(self):
         GPIO.output(self.motor_en, False)
+        
+    def Pozycja(self):
+        print
+    
             
    # def PodajPozycje(self):
     #    return self.pozycja
 
 class X360controler:
-	silnik_1 = DuzySilnik(22, 12, 24) #DuzySilnik(22, 12, 24, ads) 
+    i2c = busio.I2C(board.SCL, board.SDA) # Create the I2C bus        
+    ads = ADS.ADS1115(i2c) # Create the ADC object using the I2C bus
+    ads_pin = [ADS.P0, ADS.P1, ADS.P2, ADS.P3]
+    silnik_1 = DuzySilnik(22, 12, 24, ads, ads_pin[0]) #DuzySilnik(22, 12, 24, ads)
+    silnik_2 = DuzySilnik(23, 13, 25, ads, ads_pin[1])
     numberOfEngines = 0
     numberOfValues = 2
+    stara_pozycja_1 = 0
+    stara_pozycja_2 = 0
     run = True
     left_stick = [0, 0]
     right_stick = [0, 0]
@@ -102,8 +114,8 @@ class X360controler:
     'Pressedbutton_back'
     """
 
-    def __init__(self):
-
+    def __init__(self):        
+        
         self.buttonReactions = defaultdict(lambda: None, {'a':'b'})
         #self.buttonReactions = {'Pressedbutton_a':self.RPI.pid_turn_on,
         #                        'Pressedbutton_b':self.RPI.pid.turn_off,
@@ -361,15 +373,7 @@ class X360controler:
         options[axis.name](axis)
 
     # STEERING FUNCTIONS
-    def steering(self):
-        x_vel = 100 * (self.right_trigger - self.left_trigger)
-        y_vel = 100 * self.right_stick[0]
-        z_vel = 100 * self.right_stick[1]
-        yaw_vel = 100 * self.left_stick[0]
-        self.engines[0] = int(x_vel)
-        self.engines[1] = int(y_vel)
-        self.engines[2] = int(z_vel)
-        self.engines[3] = int(yaw_vel)
+    #def steering(self):
 
     def cart2coord(self, x_coord, y_coord, z_coord, o_coord, a_coord, t_coord):  # to add inverse kinematics!
         pair1 = 1 * x_coord
@@ -379,7 +383,9 @@ class X360controler:
         pair5 = 1 * a_coord
         pair6 = 1 * t_coord
         return [pair1, pair2, pair3, pair4, pair5, pair6]
-
+    
+    
+        
     def Start(self):
 
         with Xbox360Controller(0, axis_threshold=self.deadzone) as controller:
@@ -417,14 +423,31 @@ class X360controler:
             while self.run:
                 #self.steering()
                 time.sleep(0.005)
-                try:				
-					_run_in_thread(self, silnik_1.Jedz, self.right_stick[0])
+                try:
+                    #print("przed metoda")
+                    
+                    self._run_in_thread2(self.silnik_1.Jedz, self.right_stick[1])
+                    self._run_in_thread2(self.silnik_2.Jedz, self.left_stick[1])
+                  #  if(self.stara_pozycja_1 != (self.silnik_1.pozycja.voltage-0.780)*360/(3.946 - 0.780) or self.stara_pozycja_2 != (self.silnik_2.pozycja.voltage-0.780)*360/(3.946 - 0.780)):
+                   #     os.system("clear")
+                    #    print("Silnik 1: \t{:>5.3f}".format((self.silnik_1.pozycja.voltage-0.780)*360/(3.946 - 0.780)))
+                     #   print("Silnik 2: \t{:>5.3f}".format((self.silnik_2.pozycja.voltage-0.780)*360/(3.946 - 0.780)))
+                      #  self.stara_pozycja_1 = (self.silnik_1.pozycja.voltage-0.780)*360/(3.946 - 0.780)
+                       # self.stara_pozycja_2 = (self.silnik_2.pozycja.voltage-0.780)*360/(3.946 - 0.780)
+                    #print("za metoda")
                     # Zostawione jako przyklad self.RPI.set_engine_driver_values(self.engines[0]/100, self.engines[1]/100, self.engines[2]/100,self.engines[3]/100, 0, 0)
-                except Exception:
+                except Exception as e:
+                    print(e)
+                    print(self.right_stick[1])
                     pass
 
-    def _run_in_thread(self, func, predkosc):
-        thread = Thread(target=func, args=(predkosc))
+    def _run_in_thread2(self, func, predkosc):
+        thread = Thread(target=func, args=[predkosc])
+        thread.start()
+        
+    def _run_in_thread(self, func):
+        print("przed watkiem 1")
+        thread = Thread(target=func)
         thread.start()
 
 if __name__ == '__main__':
